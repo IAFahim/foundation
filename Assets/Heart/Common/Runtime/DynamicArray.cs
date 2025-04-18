@@ -9,10 +9,18 @@ namespace Pancake.Common
     [Serializable]
     public class DynamicArray<T> : IReadonlyDynamicArray<T>, IReadOnlyCovariantDynamicArray<T>
     {
-        [SerializeField] public T[] items;
-        public int Count => Length;
-        [field: SerializeField, ReadOnly] public int Length { get; set; }
-        public int TotalLength => items.Length;
+        [SerializeField] internal T[] items;
+
+        /// <summary>
+        /// Number of elements in the array.
+        /// </summary>
+        [field: SerializeField, ReadOnly] public int Length { get; internal set; }
+
+        /// <summary>
+        /// Allocated size of the array.
+        /// </summary>
+        public int Capacity => items.Length;
+
         private const int DEFAULT_CAPACITY = 10;
         private const int MINIMUM_PADDING = 5;
 
@@ -30,10 +38,30 @@ namespace Pancake.Common
 
         public void Add(T item)
         {
-            if (Length + 1 > TotalLength) ResizeMaintain(TotalLength + CalculatePadding(TotalLength));
+            if (Length + 1 > Capacity) ResizeMaintain(Capacity + CalculatePadding(Capacity));
 
             this[Length] = item;
             Length++;
+        }
+
+        public void AddRange(T[] items)
+        {
+            int addedSize = items.Length;
+            if (Length + items.Length > Capacity) ResizeMaintain(Capacity + CalculatePadding(Capacity) + addedSize);
+            for (var i = 0; i < addedSize; i++)
+            {
+                this[Length++] = items[i];
+            }
+        }
+
+        public void AddRange(List<T> items)
+        {
+            int addedSize = items.Count;
+            if (Length + items.Count > Capacity) ResizeMaintain(Capacity + CalculatePadding(Capacity) + addedSize);
+            for (var i = 0; i < addedSize; i++)
+            {
+                this[Length++] = items[i];
+            }
         }
 
         public void ResizeNew(int capacity)
@@ -44,11 +72,11 @@ namespace Pancake.Common
 
         public void ResizeMaintain(int capacity)
         {
-            if (capacity <= TotalLength) return;
+            if (capacity <= Capacity) return;
 
             var original = items;
             items = new T[capacity];
-            Array.Copy(original, items, original.Length);
+            Array.Copy(original, items, Length); // Copy only valid elements
         }
 
         public T this[int index] { get => items[index]; set => items[index] = value; }
@@ -61,7 +89,7 @@ namespace Pancake.Common
 
         public void Assign(IEnumerable<T> items, int count)
         {
-            if (count > TotalLength) ResizeNew(count + CalculatePadding(count));
+            if (count > Capacity) ResizeNew(count + CalculatePadding(count));
 
             var i = 0;
             foreach (var item in items)
@@ -77,7 +105,7 @@ namespace Pancake.Common
         {
             var insertIndex = 0;
 
-            for (var i = 0; i < Count; i++)
+            for (var i = 0; i < Length; i++)
             {
                 var item = this[i];
                 if (filter(item))
@@ -103,6 +131,30 @@ namespace Pancake.Common
             items[Length] = default; // Clear last item
         }
 
-        public int CalculatePadding(int currentCapacity, int segment = 4) => (currentCapacity / segment).Max(MINIMUM_PADDING); // 25% of current capacity or minimum MINIMUM_PADDING
+        public int CalculatePadding(int currentCapacity, int segment = 4) =>
+            (currentCapacity / segment).Max(MINIMUM_PADDING); // 25% of current capacity or minimum MINIMUM_PADDING
+
+        public static DynamicArray<T> Get() { return DynamicArrayPool<T>.Get(); }
+
+        public void Dispose()
+        {
+            Array.Clear(items, 0, Length);
+            DynamicArrayPool<T>.Return(this);
+        }
+    }
+
+    internal static class DynamicArrayPool<T>
+    {
+        private static readonly Stack<DynamicArray<T>> Pool = new();
+
+        internal static DynamicArray<T> Get() { return Pool.Count > 0 ? Pool.Pop() : new DynamicArray<T>(); }
+
+        internal static void Return(DynamicArray<T> array)
+        {
+            array.Length = 0;
+            Pool.Push(array);
+        }
+
+        internal static void Clear() { Pool.Clear(); }
     }
 }

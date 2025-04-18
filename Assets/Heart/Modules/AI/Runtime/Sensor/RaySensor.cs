@@ -1,6 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
 using Pancake.Common;
+#if UNITY_EDITOR
+using Pancake.Draw;
+#endif
 using Pancake.ExTag;
 using Sirenix.OdinInspector;
 using UnityEngine;
@@ -20,9 +23,8 @@ namespace Pancake.AI
         [Space(8), SerializeField, Required] private Transform source;
         [SerializeField] private GameObjectUnityEvent detectedEvent;
 
-        private readonly RaycastHit[] _hits = new RaycastHit[16];
+        private DynamicArray<RaycastHit> _hits = new();
         private readonly HashSet<Collider> _hitObjects = new();
-        private int _count;
 
         private enum RayDirection
         {
@@ -31,7 +33,8 @@ namespace Pancake.AI
             Top,
             Bottom,
             Forward,
-            Back
+            Back,
+            GameObject
         }
 
         private enum Shape
@@ -64,6 +67,7 @@ namespace Pancake.AI
                 RayDirection.Bottom => currentPoint + Vector3.down * range,
                 RayDirection.Forward => currentPoint + Vector3.forward * range,
                 RayDirection.Back => currentPoint + Vector3.back * range,
+                RayDirection.GameObject => currentPoint + source.forward * range,
                 _ => currentPoint
             };
             return endPosition;
@@ -77,10 +81,10 @@ namespace Pancake.AI
             switch (shape)
             {
                 case Shape.Ray:
-                    _count = Physics.RaycastNonAlloc(ray, _hits, range, layer.value);
+                    PhysicsCast.RaycastNonAlloc(ray, _hits, range, layer.value);
                     break;
                 case Shape.Sphere:
-                    _count = Physics.SphereCastNonAlloc(from,
+                    PhysicsCast.SphereCastNonAlloc(from,
                         radius,
                         dir,
                         _hits,
@@ -89,7 +93,7 @@ namespace Pancake.AI
 
                     break;
                 case Shape.Box:
-                    _count = Physics.BoxCastNonAlloc(from,
+                    PhysicsCast.BoxCastNonAlloc(from,
                         Vector3.one * radius,
                         dir,
                         _hits,
@@ -101,11 +105,10 @@ namespace Pancake.AI
                     throw new ArgumentOutOfRangeException();
             }
 
-            if (_count <= 0) return;
+            if (_hits.Length <= 0) return;
 
-            for (var i = 0; i < _count; i++)
+            foreach (var hit in _hits)
             {
-                var hit = _hits[i];
                 if (hit.collider != null && hit.collider.transform != source)
                 {
                     HandleHit(hit);
@@ -134,29 +137,29 @@ namespace Pancake.AI
 #endif
         }
 
-        public override Transform GetClosestTarget(StringConstant tag)
+        public override Transform GetClosestTarget(StringKey tag)
         {
-            if (_count == 0) return null;
+            if (_hits.Length == 0) return null;
 
             Transform closestTarget = null;
             float closestDistance = Mathf.Infinity;
             var currentPosition = source.position;
-            for (var i = 0; i < _count; i++)
+            foreach (var hit in _hits)
             {
                 if (newTagSystem)
                 {
-                    if (!_hits[i].collider.gameObject.HasTag(tag.Value)) continue;
+                    if (!hit.collider.gameObject.HasTag(tag.Name)) continue;
                 }
                 else
                 {
-                    if (!_hits[i].collider.CompareTag(tag.Value)) continue;
+                    if (!hit.collider.CompareTag(tag.Name)) continue;
                 }
 
-                float distanceToTarget = Vector3.Distance(_hits[i].point, currentPosition);
+                float distanceToTarget = Vector3.Distance(hit.point, currentPosition);
                 if (distanceToTarget < closestDistance)
                 {
                     closestDistance = distanceToTarget;
-                    closestTarget = _hits[i].transform;
+                    closestTarget = hit.transform;
                 }
             }
 
@@ -165,18 +168,18 @@ namespace Pancake.AI
 
         public override Transform GetClosestTarget()
         {
-            if (_count == 0) return null;
+            if (_hits.Length == 0) return null;
 
             Transform closestTarget = null;
             float closestDistance = Mathf.Infinity;
             var currentPosition = source.position;
-            for (var i = 0; i < _count; i++)
+            foreach (var hit in _hits)
             {
-                float distanceToTarget = Vector3.Distance(_hits[i].point, currentPosition);
+                float distanceToTarget = Vector3.Distance(hit.point, currentPosition);
                 if (distanceToTarget < closestDistance)
                 {
                     closestDistance = distanceToTarget;
-                    closestTarget = _hits[i].transform;
+                    closestTarget = hit.transform;
                 }
             }
 
@@ -194,18 +197,15 @@ namespace Pancake.AI
                 switch (shape)
                 {
                     case Shape.Ray:
-                        Gizmos.color = Color.green;
-                        Gizmos.DrawWireSphere(currentPoint, 0.1f);
-                        Gizmos.DrawWireSphere(endPosition, 0.1f);
-
-                        Gizmos.color = Color.yellow;
-                        Gizmos.DrawLine(currentPoint, endPosition);
+                        ImGizmos.WireSphere3D(currentPoint, Quaternion.identity, 0.1f, Color.green);
+                        ImGizmos.WireSphere3D(endPosition, Quaternion.identity, 0.1f, Color.green);
+                        ImGizmos.Line3D(currentPoint, endPosition, Color.yellow);
                         break;
                     case Shape.Sphere:
-                        DebugEditor.DrawSphereCast3D(currentPoint, radius, dir, range);
+                        ImGizmos.DrawSphereCast3D(currentPoint, radius, dir, range);
                         break;
                     case Shape.Box:
-                        DebugEditor.DrawBoxCast3D(currentPoint,
+                        ImGizmos.DrawBoxCast3D(currentPoint,
                             Vector3.one * radius,
                             dir,
                             Quaternion.identity,

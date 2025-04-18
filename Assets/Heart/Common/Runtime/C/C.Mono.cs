@@ -1488,6 +1488,18 @@ namespace Pancake.Common
 
         #endregion
 
+        #region Distance
+
+        public static float Distance(this Transform transform, Transform target) => Vector3.Distance(transform.position, target.position);
+
+        public static float Distance(this Transform transform, Vector3 target) => Vector3.Distance(transform.position, target);
+
+        public static float DistanceWithoutY(this Transform transform, Transform target) => Vector3.Distance(transform.position.WithY(0), target.position.WithY(0));
+
+        public static float DistanceWithoutY(this Transform transform, Vector3 target) => Vector3.Distance(transform.position.WithY(0), target.WithY(0));
+
+        #endregion
+
         /// <summary>
         /// 
         /// </summary>
@@ -1523,7 +1535,7 @@ namespace Pancake.Common
             source.offsetMin = Vector2.zero;
             source.offsetMax = Vector2.zero;
             source.pivot = new Vector2(0.5f, 0.5f);
-            source.rotation = Quaternion.identity;
+            source.localRotation = Quaternion.identity;
             source.localScale = Vector3.one;
         }
 

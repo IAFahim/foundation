@@ -317,6 +317,16 @@ namespace Sisus.Init.Internal
 			}
 			else if(argument.reference)
 			{
+				#if UNITY_EDITOR
+				if(AssetDatabase.Contains(argument.reference))
+				{
+					#if DEV_MODE
+					Debug.LogError("HandleDisposeValue target '{argument.reference}' was an asset ('{AssetDatabase.GetAssetPath(argument.reference)}').");
+					#endif
+					return;
+				}
+				#endif
+
 				Object.Destroy(argument.reference);
 			}
 		}
@@ -2049,7 +2059,17 @@ namespace Sisus.Init.Internal
 		public static void OnInitializableReset(MonoBehaviour initializable)
 		{
 			var type = initializable.GetType();
-			foreach(var initializerOnGameObject in initializable.GetComponents<IInitializer>())
+			var initializersOnGameObject = initializable.GetComponents<IInitializer>();
+			
+			foreach(var initializerOnGameObject in initializersOnGameObject)
+			{
+				if(ReferenceEquals(initializerOnGameObject.Target, initializable))
+				{
+					return;
+				}
+			}
+			
+			foreach(var initializerOnGameObject in initializersOnGameObject)
 			{
 				if(!initializerOnGameObject.Target && initializerOnGameObject.TargetIsAssignableOrConvertibleToType(type))
 				{

@@ -1,6 +1,10 @@
-﻿using Pancake.Sound;
+﻿using System.Linq;
+using Pancake.Common;
+using Pancake.Linq;
+using Pancake.Sound;
 using PancakeEditor.Common;
 using Sirenix.OdinInspector.Editor;
+using Sirenix.Utilities.Editor;
 using UnityEditor;
 using UnityEngine;
 
@@ -8,6 +12,7 @@ namespace PancakeEditor.Sound
 {
     public class AudioIdPickupDrawer : OdinValueDrawer<AudioId>
     {
+        private static AudioData noneAudioData;
         private string _selectedId;
 
         protected override void DrawPropertyLayout(GUIContent label)
@@ -24,7 +29,7 @@ namespace PancakeEditor.Sound
             EditorGUIUtility.labelWidth = 150;
 
             var buttonRect = new Rect(position.x + position.width * 0.4f, position.y, position.width * 0.6f, position.height);
-            var buttonText = "Select type...";
+            var buttonText = "Select Audio...";
             var buttonColor = Uniform.Error;
 
             if (!string.IsNullOrEmpty(value.id))
@@ -45,42 +50,49 @@ namespace PancakeEditor.Sound
                 }
             }
 
-            var originalColor = GUI.backgroundColor;
+            var defaultColor = GUI.backgroundColor;
             GUI.backgroundColor = buttonColor;
             if (GUI.Button(buttonRect, buttonText))
             {
-                var menu = new GenericMenu();
                 var allAudioAsset = ProjectDatabase.FindAll<AudioData>();
+                InitNoneOption();
+                allAudioAsset.Insert(0, noneAudioData);
+                var selector = new GenericSelector<AudioData>("Select Audio", allAudioAsset, false, item => item.name);
 
-                menu.AddItem(new GUIContent("None"),
-                    _selectedId == string.Empty,
-                    () =>
-                    {
-                        value.id = string.Empty;
-                        value.name = string.Empty;
-                        _selectedId = string.Empty;
-                    });
+                selector.SetSelection(allAudioAsset.Filter(t => t.id == _selectedId));
 
-                for (var i = 0; i < allAudioAsset.Count; i++)
+                selector.SelectionConfirmed += selection =>
                 {
-                    var audioData = allAudioAsset[i];
-                    menu.AddItem(new GUIContent($"{audioData.name}"),
-                        audioData.id == _selectedId,
-                        () =>
-                        {
-                            value.id = audioData.id;
-                            value.name = audioData.name;
-                            _selectedId = audioData.id;
-                        });
-                }
+                    var audioDatas = selection as AudioData[] ?? selection.ToArray();
+                    if (audioDatas.IsNullOrEmpty()) return;
 
-                menu.DropDown(buttonRect);
+                    var audioData = audioDatas[0];
+                    
+                    ValueEntry.SmartValue = new AudioId
+                    {
+                        id = audioData.id,
+                        name = !string.IsNullOrEmpty(audioData.id) ? audioData.name : string.Empty
+                    };
+                    
+                    _selectedId = audioData.id;
+                    Undo.RecordObject(ValueEntry.Property.Tree.UnitySerializedObject.targetObject, "Changed AudioId");
+                    ValueEntry.ApplyChanges();
+                    GUIHelper.RequestRepaint();
+                };
+
+                selector.ShowInPopup();
             }
 
-            GUI.backgroundColor = originalColor;
-
+            GUI.backgroundColor = defaultColor;
             EditorGUIUtility.labelWidth = prev;
-            ValueEntry.SmartValue = value;
+        }
+
+        private void InitNoneOption()
+        {
+            if (noneAudioData != null) return;
+            noneAudioData = ScriptableObject.CreateInstance<AudioData>();
+            noneAudioData.id = "";
+            noneAudioData.name = "none";
         }
     }
 }

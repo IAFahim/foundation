@@ -17,6 +17,10 @@ using Object = UnityEngine.Object;
 using static Sisus.Init.Internal.ServiceTagUtility;
 using static Sisus.NullExtensions;
 
+#if UNITY_ADDRESSABLES_1_17_4_OR_NEWER
+using UnityEngine.AddressableAssets;
+#endif
+
 #if DEV_MODE && DEBUG && !INIT_ARGS_DISABLE_PROFILING
 using Unity.Profiling;
 #endif
@@ -27,7 +31,7 @@ namespace Sisus.Init.EditorOnly.Internal
 	internal static class EditorServiceTagUtility
 	{
 		internal static Component openSelectTagsMenuFor;
-		private static readonly GUIContent serviceLabel = new("Service", "An instance of this service will be automatically provided during initialization.");
+		private static readonly GUIContent serviceLabel = new("Service", "A service of this type is available.\n\nIt can be acquired automatically during initialization.");
 		private static readonly GUIContent blankLabel = new(" ");
 		private static readonly HashSet<Type> definingTypesBuilder = new();
 		private static readonly Dictionary<object, Type[]> objectDefiningTypesCache = new();
@@ -172,10 +176,6 @@ namespace Sisus.Init.EditorOnly.Internal
 			static void AddServiceDefiningTypes([AllowNull] Component clientOrNull, [DisallowNull] object service, [DisallowNull] HashSet<Type> definingTypes)
 			{
 				Type concreteType = service.GetType();
-				foreach(var definingType in ServiceAttributeUtility.GetDefiningTypes(concreteType))
-				{
-					definingTypes.Add(definingType);
-				}
 
 				for(var typeOrBaseType = concreteType; !TypeUtility.IsNullOrBaseType(typeOrBaseType); typeOrBaseType = typeOrBaseType.BaseType)
 				{
@@ -302,7 +302,7 @@ namespace Sisus.Init.EditorOnly.Internal
 		}
 
 		/// <param name="anyProperty"> SerializedProperty of <see cref="Any{T}"/> or some other type field. </param>
-		internal static bool Draw(Rect controlRect, SerializedProperty anyProperty, GUIContent label = null, bool serviceExists = true)
+		internal static bool Draw(Rect controlRect, SerializedProperty anyProperty = null, GUIContent label = null, bool serviceExists = true)
 		{
 			label ??= serviceLabel;
 			float maxWidth = Styles.ServiceTag.CalcSize(label).x;
@@ -371,9 +371,66 @@ namespace Sisus.Init.EditorOnly.Internal
 
 			}
 
-			var classWithAttribute = ServiceInjector.GetClassWithServiceAttribute(serviceDefiningType);
-			var script = Find.Script(classWithAttribute ?? serviceDefiningType);
-			if(!script && classWithAttribute != null)
+			var typeToPing = ServiceInjector.GetClassWithServiceAttribute(serviceDefiningType);
+			if(ServiceAttributeUtility.definingTypes.TryGetValue(serviceDefiningType, out var serviceInfo))
+			{
+				typeToPing = serviceInfo.serviceOrProviderType ?? serviceDefiningType;
+				if(serviceInfo.FindFromScene)
+				{
+					if(Find.Any(serviceDefiningType, out var service) && Find.GameObjectOf(service, out GameObject serviceGameObject))
+					{
+						EditorGUIUtility.PingObject(serviceGameObject);
+						LayoutUtility.ExitGUI();
+						return;
+					}
+
+					if(serviceInfo.SceneBuildIndex >= 0)
+					{
+						var sceneAsset = Find.SceneAssetByBuildIndex(serviceInfo.SceneBuildIndex);
+						if(sceneAsset)
+						{
+							EditorGUIUtility.PingObject(sceneAsset);
+							LayoutUtility.ExitGUI();
+							return;
+						}
+					}
+					else if(serviceInfo.SceneName is { Length: > 0 } sceneName)
+					{
+						var sceneAsset = Find.SceneAssetByName(sceneName);
+						EditorGUIUtility.PingObject(sceneAsset);
+						LayoutUtility.ExitGUI();
+					}
+				}
+				else if(serviceInfo.ResourcePath is { Length: > 0 } resourcePath)
+				{
+					var service = Resources.Load<Object>(resourcePath);
+					if(service)
+					{
+						EditorGUIUtility.PingObject(service);
+						LayoutUtility.ExitGUI();
+						return;
+					}
+				}
+				#if UNITY_ADDRESSABLES_1_17_4_OR_NEWER
+				else if(serviceInfo.AddressableKey is { Length: > 0 } addressableKey)
+				{
+					var service = Addressables.LoadAssetAsync<Object>(addressableKey).WaitForCompletion();
+					if(service)
+					{
+						EditorGUIUtility.PingObject(service);
+						LayoutUtility.ExitGUI();
+						return;
+					}
+				}
+				#endif
+			}
+			else
+			{
+				typeToPing = serviceDefiningType;
+			}
+
+			var script = Find.Script(typeToPing);
+			if(!script && typeToPing != serviceDefiningType)
 			{
 				script = Find.Script(serviceDefiningType);
 			}
@@ -385,7 +442,8 @@ namespace Sisus.Init.EditorOnly.Internal
 			}
 			else
 			{
-				Debug.Log($"Could not locate the script that contains the type '{TypeUtility.ToString(classWithAttribute ?? serviceDefiningType)}'.\nThis can happen when the name of the script does not match the type name.", client);
+				EditorApplication.ExecuteMenuItem("Window/General/Console");
+				Debug.Log($"Could not locate the script that contains the type '{TypeUtility.ToString(typeToPing)}'.\nThis can happen when the name of the script does not match the type name.", client);
 			}
 		}
 
@@ -439,9 +497,30 @@ namespace Sisus.Init.EditorOnly.Internal
 			EditorGUIUtility.PingObject(service);
 			LayoutUtility.ExitGUI();
 		}
+		
+		internal static bool PingServiceFor(Object client, Type serviceType)
+		{
+			if(ServiceUtility.TryGetFor(client, serviceType, out var service) && Find.In(service, out Object unityObject))
+			{
+				PingService(unityObject);
+				return true;
+			}
 
-		internal static void SelectAllReferencesInScene(object serviceOrServiceProvider)
+			var typeToPing = ServiceAttributeUtility.definingTypes.TryGetValue(serviceType, out var serviceInfo) ? serviceInfo.serviceOrProviderType ?? serviceType : serviceType;
+			if(Find.Script(typeToPing, out var scriptToPing))
+			{
+				PingService(scriptToPing);
+				return true;
+			}
+
+			return false;
+		}
+
+		internal static void SelectAllGlobalServiceClientsInScene(object serviceOrServiceProvider)
 			=> Selection.objects = GetServiceDefiningTypes(serviceOrServiceProvider).ToArray().SelectMany(FindAllReferences).Distinct().ToArray();
+
+		internal static void SelectAllReferencesInScene(object serviceOrServiceProvider, Type[] definingTypes, Clients clients, Component registerer)
+			=> Selection.objects = definingTypes.SelectMany(FindAllReferences).Distinct().Where(go => Service.IsAccessibleTo(go.transform, registerer, clients)).ToArray();
 
 		/// <summary>
 		/// Ping MonoScript or GameObject containing the configuration that causes the object, or the value provided by the object
@@ -454,7 +533,7 @@ namespace Sisus.Init.EditorOnly.Internal
 		{
 			// Ping services component that defines the service, if any...
 			var services = Find.All<Services>().FirstOrDefault(s => s.providesServices.Any(i => AreEqual(i.service, serviceOrServiceProvider)));
-			if(services != null)
+			if(services)
 			{
 				EditorGUIUtility.PingObject(services);
 				return;
@@ -465,7 +544,7 @@ namespace Sisus.Init.EditorOnly.Internal
 			if(HasServiceAttribute(serviceOrServiceProviderType))
 			{
 				var scriptWithServiceAttribute = Find.Script(serviceOrServiceProviderType);
-				if(scriptWithServiceAttribute != null)
+				if(scriptWithServiceAttribute)
 				{
 					EditorGUIUtility.PingObject(scriptWithServiceAttribute);
 					return;
@@ -584,11 +663,11 @@ namespace Sisus.Init.EditorOnly.Internal
 			}
 		}
 
-		internal static void OpenContextMenuForService(Component serviceOrServiceProvider, Rect tagRect)
+		internal static void OpenContextMenuForService(Component serviceOrServiceProvider, Type[] definingTypes, Clients clients, Component registerer, Rect tagRect)
 		{
 			var menu = new GenericMenu();
 
-			menu.AddItem(new GUIContent("Find Clients In Scenes"), false, () => SelectAllReferencesInScene(serviceOrServiceProvider));
+			menu.AddItem(new GUIContent("Find Clients In Scenes"), false, () => SelectAllReferencesInScene(serviceOrServiceProvider, definingTypes, clients, registerer));
 
 			if(HasServiceTag(serviceOrServiceProvider))
 			{
@@ -640,6 +719,8 @@ namespace Sisus.Init.EditorOnly.Internal
 
 			void OnTypeSelected(Type selectedType)
 			{
+				Undo.RecordObject(service, "Set Service Type");
+
 				if(ServiceTag.Remove(service, selectedType))
 				{
 					return;
@@ -733,7 +814,7 @@ namespace Sisus.Init.EditorOnly.Internal
 			for(int c = components.Count - 1; c >= 1; c--)
 			{
 				var component = components[c];
-				if(component == null)
+				if(!component)
 				{
 					continue;
 				}

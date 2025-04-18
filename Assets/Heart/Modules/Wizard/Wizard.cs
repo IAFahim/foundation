@@ -31,7 +31,6 @@ namespace PancakeEditor
             None = -1,
             Adjust,
             Advertisement,
-            Build,
             Firebase,
             GameService,
             HeartSetting,
@@ -57,7 +56,6 @@ namespace PancakeEditor
             GameSerice = WizardAllType.GameService,
             Localization = WizardAllType.Localization,
             OtherPacakge = WizardAllType.OtherPackage,
-            Build = WizardAllType.Build,
             Navigator = WizardAllType.Navigator,
             LevelSystem = WizardAllType.LevelSystem
         }
@@ -110,12 +108,6 @@ namespace PancakeEditor
         #region texture
 
         private SpriteAtlas _spriteAtlas;
-
-        #endregion
-
-        #region build
-
-        private AndroidBuildPipelineSettings _currentAndroidBuildPipeline;
 
         #endregion
 
@@ -353,7 +345,7 @@ namespace PancakeEditor
                 case WizardAllType.OtherPackage when _currentType is WizardType.Tools or WizardType.All:
                     OtherPackageWindow.OnInspectorGUI();
                     break;
-                case WizardAllType.LevelSystem when _currentType is WizardType.Setting or WizardType.All:
+                case WizardAllType.LevelSystem when _currentType is WizardType.Tools or WizardType.All:
                     LevelSystemWindow.OnInspectorGUI(ref _currentLevelTabType, position);
                     break;
                 case WizardAllType.Spine when _currentType is WizardType.Tools or WizardType.All:
@@ -372,9 +364,6 @@ namespace PancakeEditor
                         ref _localeSearchField,
                         ref _localeInitialized,
                         ref _currentLocaleTab);
-                    break;
-                case WizardAllType.Build when _currentType is WizardType.Tools or WizardType.All:
-                    BuildWindow.OnInspectorGUI(ref _currentAndroidBuildPipeline);
                     break;
             }
         }
@@ -454,7 +443,6 @@ namespace PancakeEditor
                 WizardAllType.Navigator => EditorResources.IconPopup,
                 WizardAllType.LevelSystem => EditorResources.IconLevelSytem,
                 WizardAllType.Spine => EditorResources.IconSpine,
-                WizardAllType.Build => EditorResources.IconUnity,
                 WizardAllType.OtherPackage => EditorResources.IconPackage,
                 _ => null
             };

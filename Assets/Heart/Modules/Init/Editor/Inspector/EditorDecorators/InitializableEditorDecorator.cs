@@ -1,4 +1,4 @@
-﻿#define DEBUG_DISPOSE
+﻿//#define DEBUG_DISPOSE
 //#define DEBUG_SETUP_DURATION
 //#define DEBUG_ENABLED
 
@@ -153,10 +153,12 @@ namespace Sisus.Init.EditorOnly
 
 			var value = EditorPrefs.GetString(InitializerGUI.SetInitializerTargetOnScriptsReloadedEditorPrefsKey);
 			EditorPrefs.DeleteKey(InitializerGUI.SetInitializerTargetOnScriptsReloadedEditorPrefsKey);
-
 			int i = value.IndexOf(':');
 			if(i <= 0)
 			{
+				#if DEV_MODE
+				Debug.LogWarning($"\"{value}\".IndexOf(':'): {i}");
+				#endif
 				return;
 			}
 
@@ -164,26 +166,38 @@ namespace Sisus.Init.EditorOnly
 			string initializerAssetPath = AssetDatabase.GUIDToAssetPath(initializerAssetGuid);
 			if(string.IsNullOrEmpty(initializerAssetPath))
 			{
+				#if DEV_MODE
+				Debug.LogWarning($"GUIDToAssetPath({initializerAssetGuid}) returned null or empty");
+				#endif
 				return;
 			}
 
 			var initializerScript = AssetDatabase.LoadAssetAtPath<MonoScript>(initializerAssetPath);
 			if(!initializerScript)
 			{
+				#if DEV_MODE
+				Debug.LogWarning($"LoadAssetAtPath<MonoScript>({initializerAssetPath}) returned null");
+				#endif
 				return;
 			}
 
 			var initializerType = initializerScript.GetClass();
 			if(initializerType is null)
 			{
+				#if DEV_MODE
+				Debug.LogWarning($"{initializerScript.name}.GetClass() was null");
+				#endif
 				return;
 			}
-            
+
 			var targetIds = value.Substring(i + 1).Split(';');
 			foreach(var idString in targetIds)
 			{
 				if(!int.TryParse(idString, out int id))
 				{
+					#if DEV_MODE
+					Debug.LogWarning($"!int.TryParse({idString})");
+					#endif
 					continue;
 				}
 
@@ -194,7 +208,7 @@ namespace Sisus.Init.EditorOnly
 				{
 					var gameObject = component.gameObject;
 					var initializerComponent = gameObject.GetComponent(initializerType);
-					if(!initializerComponent || initializerComponent is not IInitializer initializer || !initializer.TargetIsAssignableOrConvertibleToType(component.GetType()) || initializer.Target != null)
+					if(!initializerComponent || initializerComponent is not IInitializer initializer || !initializer.TargetIsAssignableOrConvertibleToType(component.GetType()) || initializer.Target)
 					{
 						continue;
 					}
@@ -242,9 +256,7 @@ namespace Sisus.Init.EditorOnly
 
 			var baseType = BaseType;
 			var firstTarget = targets[0];
-			var initParameterTypes = BaseType is null || !baseType.IsGenericType || baseType.IsGenericTypeDefinition
-				? InitializerEditorUtility.GetInitParameterTypes(firstTarget)
-				: baseType.GetGenericArguments();
+			var initParameterTypes = InitializerEditorUtility.GetInitParameterTypes(firstTarget);
 
 			DisposeInitializerGUI();
 
@@ -274,17 +286,16 @@ namespace Sisus.Init.EditorOnly
 		}
 
 		private void Repaint() => LayoutUtility.Repaint(DecoratedEditor);
-
+		
 		private void PreOnGUISetup(Type baseType)
 		{
 			preOnGUISetupDone = true;
-
-			var firstTarget = targets[0];
-			ShowRuntimeFields = firstTarget is MonoBehaviour and (IOneArgument or ITwoArguments or IThreeArguments or IFourArguments or IFiveArguments or ISixArguments or ISevenArguments or IEightArguments or INineArguments or ITenArguments or IElevenArguments or ITwelveArguments);
+			
+			ShowRuntimeFields = ShouldShowRuntimeFields();
 
 			if(ShowRuntimeFields)
 			{
-				runtimeFieldsDrawer = new RuntimeFieldsDrawer(target, baseType);
+				runtimeFieldsDrawer = new(target, baseType);
 
 				// In Play Mode we need to call Repaint occasionally so that the Runtime Fields GUI
 				// reflects the current state of any values that might be changing.
@@ -292,17 +303,16 @@ namespace Sisus.Init.EditorOnly
 				scheduledItem = schedule.Execute(RepaintIfDrawingRuntimeFields).Every(intervalMs: 500);
 			}
 
-			// Always draw the Init section if the client has an initializer attached
-			if(InitializerUtility.HasInitializer(firstTarget))
-			{
-				drawInitSection = true;
-			}
-			// Otherwise draw it the user has not disabled initializer visibility via the context menu for the client type
-			else
-			{
-				drawInitSection = !InitializerGUI.IsInitSectionHidden(firstTarget);
-			}
+			drawInitSection = ShouldDrawInitSection();
 		}
+		
+		protected virtual bool ShouldShowRuntimeFields() => target is MonoBehaviour and (IOneArgument or ITwoArguments or IThreeArguments or IFourArguments or IFiveArguments or ISixArguments or ISevenArguments or IEightArguments or INineArguments or ITenArguments or IElevenArguments or ITwelveArguments);
+		
+		protected virtual bool ShouldDrawInitSection() => 
+			// Always draw the Init section if the client has an initializer attached
+			InitializerUtility.HasInitializer(target)
+			// Otherwise draw it the user has not disabled initializer visibility via the context menu for the client type
+			|| !InitializerGUI.IsInitSectionHidden(target);
 
 		protected virtual object GetInitializable(Object inspectedTarget) => inspectedTarget;
 

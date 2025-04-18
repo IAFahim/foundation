@@ -1,4 +1,6 @@
-﻿using System;
+﻿//#define DEBUG_FIND_SCRIPT
+
+using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
@@ -13,6 +15,7 @@ using UnityEngine.AddressableAssets;
 #endif
 
 #if UNITY_EDITOR
+using System.IO;
 using UnityEditor;
 #endif
 
@@ -1630,13 +1633,7 @@ namespace Sisus.Init
 				var scene = gameObject.scene;
 				if(!scene.IsValid())
 				{
-					var rootGameObject = gameObject.transform.root.gameObject;
-					if(rootGameObject == gameObject)
-					{
-						return default;
-					}
-
-					return InChildren(rootGameObject, type, includeInactive);
+					return default;
 				}
 
 				SceneEqualityComparerCache<object>.scene = scene;
@@ -1653,7 +1650,9 @@ namespace Sisus.Init
 		/// related to the provided <paramref name="gameObject"/> are included in the search.
 		/// </para>
 		/// </summary>
-		/// <typeparam name="T"> Type of the object to find. <para>
+		/// <typeparam name="T">
+		/// Type of the object to find.
+		/// <para>
 		/// Objects match the search criteria if their class is of type <typeparamref name="T"/>,
 		/// if their class derives from a base class of type <typeparamref name="T"/>,
 		/// or their class implements an interface of type <typeparamref name="T"/>.
@@ -1703,8 +1702,7 @@ namespace Sisus.Init
 				var scene = gameObject.scene;
 				if(!scene.IsValid())
 				{
-					var rootGameObject = gameObject.transform.root.gameObject;
-					return rootGameObject == gameObject ? default : InChildren(rootGameObject, out result, includeInactive);
+					return false;
 				}
 
 				SceneEqualityComparerCache<T>.scene = scene;
@@ -1713,6 +1711,147 @@ namespace Sisus.Init
 			}
 
 			return default;
+		}
+
+		/// <summary>
+		/// Finds object with the given <see paramref="id"/> in relation to the provided <paramref name="gameObject"/>.
+		/// <para>
+		/// The provided <paramref name="including"/> value determines what <see cref="GameObject">GameObjects</see>
+		/// related to the provided <paramref name="gameObject"/> are included in the search.
+		/// </para>
+		/// </summary>
+		/// <param name="gameObject"> The <see cref="GameObject"/> to search. </param>
+		/// <param name="id"> The identifier of the object to find. </param>
+		/// <param name="result">
+		/// When this method returns, contains object of type <typeparamref name="T"/>, if found; otherwise, <see langword="null"/>. This parameter is passed uninitialized.
+		/// </param>
+		/// <param name="including">
+		/// determines what <see cref="GameObject">GameObjects</see> related
+		/// to the provided <paramref name="gameObject"/> are included in the search.
+		/// </param>
+		/// <returns> <see langword="true"/> if object of the given type was found; otherwise, <see langword="false"/>. </returns>
+		/// <typeparam name="T"> Type of the object to find. </typeparam>
+		/// <returns></returns>
+		public static bool In<T>([DisallowNull] GameObject gameObject, Id id, [NotNullWhen(true), MaybeNullWhen(false)] out T result, Including including) where T : IIdentifiable
+		{
+			bool includeInactive = HasFlag(including, Including.Inactive);
+			
+			if(!typesToFindableTypes.TryGetValue(typeof(IIdentifiable), out var findableTypes))
+			{
+				result = default;
+				return false;
+			}
+
+			var components = Cached<Component>.list;
+			for(int i = findableTypes.Length - 1; i >= 0; i--)
+			{
+				gameObject.GetComponents(findableTypes[i], components);
+				for(int c = components.Count - 1; c >= 0; c--)
+				{
+					var component = components[c];
+					if(TryConvert(component, out IIdentifiable identifiable) && identifiable.Id == id
+					&& TryConvert(component, out result)
+					&& (includeInactive || component.gameObject.activeInHierarchy))
+					{
+						components.Clear();
+						return true;
+					}
+				}
+			}
+			
+			components.Clear();
+			
+			if(HasFlag(including, Including.Children))
+			{
+				for(int i = findableTypes.Length - 1; i >= 0; i--)
+				{
+					var componentsInChildren = gameObject.GetComponentsInChildren(findableTypes[i], includeInactive);
+					for(int c = componentsInChildren.Length - 1; c >= 0; c--)
+					{
+						var component = componentsInChildren[c];
+						if(TryConvert(component, out IIdentifiable identifiable)
+							&& identifiable.Id == id
+							&& TryConvert(component, out result))
+						{
+							return true;
+						}
+					}
+				}
+			}
+
+			if(HasFlag(including, Including.Parents))
+			{
+				for(int i = findableTypes.Length - 1; i >= 0; i--)
+				{
+					var componentsInParent = gameObject.GetComponentsInParent(findableTypes[i], includeInactive);
+					for(int c = componentsInParent.Length - 1; c >= 0; c--)
+					{
+						var component = componentsInParent[c];
+						if(TryConvert(component, out IIdentifiable identifiable)
+							&& identifiable.Id == id
+							&& TryConvert(component, out result))
+						{
+							return true;
+						}
+					}
+				}
+			}
+
+			if(HasFlag(including, Including.Scene))
+			{
+				#if UNITY_EDITOR
+				if(gameObject.IsPartOfPrefabAssetOrOpenInPrefabStage())
+				{
+					var root = gameObject.transform.root.gameObject;
+					if(gameObject == root && HasFlag(including, Including.Children))
+					{
+						result = default;
+						return false;
+					}
+
+					for(int i = findableTypes.Length - 1; i >= 0; i--)
+					{
+						var componentsInChildren = root.GetComponentsInChildren(findableTypes[i], includeInactive);
+						for(int c = componentsInChildren.Length - 1; c >= 0; c--)
+						{
+							var component = componentsInChildren[c];
+							if(TryConvert(component, out IIdentifiable identifiable)
+							   && identifiable.Id == id
+							   && TryConvert(component, out result))
+							{
+								return true;
+							}
+						}
+					}
+				}
+				#endif
+
+				var scene = gameObject.scene;
+				if(!scene.IsValid())
+				{
+					result = default;
+					return false;
+				}
+
+				SceneEqualityComparerCache<T>.scene = scene;
+				for(int i = findableTypes.Length - 1; i >= 0; i--)
+				{
+					var componentsInScene = All(SceneEqualityComparerCache<T>.Predicate, includeInactive);
+					for(int c = componentsInScene.Length - 1; c >= 0; c--)
+					{
+						var component = componentsInScene[c];
+						if(TryConvert(component, out IIdentifiable identifiable)
+						   && identifiable.Id == id
+						   && TryConvert(component, out result))
+						{
+							return true;
+						}
+					}
+				}
+			}
+
+			result = default;
+			return false;
 		}
 
 		/// <summary>
@@ -1726,9 +1865,10 @@ namespace Sisus.Init
 		/// <item> 4. All the children of the hierarchy root of the client. </item>
 		/// <item> 5. All the GameObjects in the same scene with the client. </item>
 		/// <item> 6. All the GameObjects in other scenes. </item>
+		/// </list>
 		/// </para>
 		/// </summary>
-		/// <typeparam name="T"> Type of the object to find. <para>
+		/// <typeparam name="T"> Type of the object to find. </typeparam>
 		/// <param name="gameObject">
 		/// The <see cref="GameObject"/> relative to which the nearest object in the scene hierarchy is returned.
 		/// </param>
@@ -2221,23 +2361,23 @@ namespace Sisus.Init
 
 			if(HasFlag(including, Including.Scene))
 			{
+				var root = gameObject.transform.root.gameObject;
 				#if UNITY_EDITOR
 				if(gameObject.IsPartOfPrefabAssetOrOpenInPrefabStage())
 				{
-					return InChildren<T>(gameObject.transform.root.gameObject, includeInactive);
+					if(gameObject == root && HasFlag(including, Including.Children))
+					{
+						return default;
+					}
+
+					return InChildren<T>(root, includeInactive);
 				}
 				#endif
 
 				var scene = gameObject.scene;
 				if(!scene.IsValid())
 				{
-					var rootGameObject = gameObject.transform.root.gameObject;
-					if(rootGameObject == gameObject)
-					{
-						return default;
-					}
-
-					return InChildren<T>(rootGameObject, includeInactive);
+					return default;
 				}
 
 				SceneEqualityComparerCache<T>.scene = scene;
@@ -2353,6 +2493,12 @@ namespace Sisus.Init
 					return AllInChildren<T>(gameObject.transform.root.gameObject, includeInactive);
 				}
 				#endif
+				
+				var scene = gameObject.scene;
+				if(!scene.IsValid())
+				{
+					return Array.Empty<T>();
+				}
 
 				SceneEqualityComparerCache<T>.scene = gameObject.scene;
 				return All(SceneEqualityComparerCache<T>.Predicate, includeInactive);
@@ -2398,8 +2544,14 @@ namespace Sisus.Init
 					return AllInChildren(gameObject.transform.root.gameObject, type, includeInactive);
 				}
 				#endif
+				
+				var scene = gameObject.scene;
+				if(!scene.IsValid())
+				{
+					return default;
+				}
 
-				SceneEqualityComparerCache<object>.scene = gameObject.scene;
+				SceneEqualityComparerCache<object>.scene = scene;
 				return All(SceneEqualityComparerCache<object>.Predicate, includeInactive);
 			}
 
@@ -2450,6 +2602,59 @@ namespace Sisus.Init
 					TryAddAs(results, components[c]);
 				}
 			}
+		}
+		
+
+		/// <returns> Array of zero or more objects of type <typeparamref name="T"/>. </returns>
+		[return: NotNull]
+		public static void AllIn<T>([DisallowNull] GameObject gameObject, [DisallowNull] List<T> results, Including including)
+		{
+			bool includeInactive = HasFlag(including, Including.Inactive);
+
+			if(HasFlag(including, Including.Scene))
+			{
+				#if UNITY_EDITOR
+				if(gameObject.IsPartOfPrefabAssetOrOpenInPrefabStage())
+				{
+					AllInChildren(gameObject.transform.root.gameObject, results, includeInactive);
+					return;
+				}
+				#endif
+				
+				var scene = gameObject.scene;
+				if(!scene.IsValid())
+				{
+					return;
+				}
+
+				SceneEqualityComparerCache<T>.scene = scene;
+				All(SceneEqualityComparerCache<T>.Predicate, results, includeInactive);
+				return;
+			}
+
+			if(HasFlag(including, Including.Children))
+			{
+				AllInChildren(gameObject, results, includeInactive);
+
+				if(HasFlag(including, Including.Parents))
+				{
+					Transform parent = gameObject.transform.parent;
+					if(parent)
+					{
+						AllInParents(parent.gameObject, results, includeInactive);
+					}
+				}
+
+				return;
+			}
+			
+			if(HasFlag(including, Including.Parents))
+			{
+				AllInParents(gameObject, results, includeInactive);
+				return;
+			}
+			
+			AllIn(gameObject, results);
 		}
 
 		/// <typeparam name="T">
@@ -2529,7 +2734,7 @@ namespace Sisus.Init
 				var guids = AssetDatabase.FindAssets("t:" + type.Name);
 				for(int g = guids.Length - 1; g >= 0; g--)
 				{
-					string assetPath = AssetDatabase.GUIDToAssetPath(guids[i]);
+					var assetPath = AssetDatabase.GUIDToAssetPath(guids[g]);
 					var instance = AssetDatabase.LoadAssetAtPath(assetPath, type);
 					if(instance)
 					{
@@ -2539,6 +2744,53 @@ namespace Sisus.Init
 			}
 
 			return default;
+		}
+		#endif
+		
+		#if UNITY_EDITOR
+		/// <summary>
+		/// Loads a scene asset by the given name.
+		/// <remarks>
+		/// This method is only available in the editor.
+		/// </remarks>
+		/// </summary>
+		/// <param name="sceneName"> Name of the scene asset to load. </param>
+		/// <returns> The loaded scene asset, if found; otherwise, <see langword="null"/>. </returns>
+		[return: MaybeNull]
+		public static SceneAsset SceneAssetByName(string sceneName)
+		{
+			var filenameWithExtension = sceneName + ".unity";
+			var guids = AssetDatabase.FindAssets(filenameWithExtension);
+			var assetPaths = guids.Select(AssetDatabase.GUIDToAssetPath).Where(assetPath => string.Equals(Path.GetFileName(assetPath), filenameWithExtension, StringComparison.OrdinalIgnoreCase)).ToArray();
+			if(assetPaths.Length == 0)
+			{
+				return null;
+			}
+
+			if(assetPaths.Length == 1)
+			{
+				return AssetDatabase.LoadAssetAtPath<SceneAsset>(assetPaths[0]);
+			}
+
+			var sceneInBuildSettings = assetPaths.Where(assetPath => SceneUtility.GetBuildIndexByScenePath(assetPath) != -1).SingleOrDefaultNoException();
+			return sceneInBuildSettings is null ? null : AssetDatabase.LoadAssetAtPath<SceneAsset>(sceneInBuildSettings);
+		}
+		#endif
+
+		#if UNITY_EDITOR
+		/// <summary>
+		/// Loads a scene asset by the given build index.
+		/// <remarks>
+		/// This method is only available in the editor.
+		/// </remarks>
+		/// </summary>
+		/// <param name="buildIndex"> Index of the scene in build settings. </param>
+		/// <returns> The loaded scene asset, if found; otherwise, <see langword="null"/>. </returns>
+		[return: MaybeNull]
+		public static SceneAsset SceneAssetByBuildIndex(int buildIndex)
+		{
+			var assetPath = SceneUtility.GetScenePathByBuildIndex(buildIndex);
+			return string.IsNullOrEmpty(assetPath) ? null : AssetDatabase.LoadAssetAtPath<SceneAsset>(assetPath);
 		}
 		#endif
 
@@ -2593,7 +2845,7 @@ namespace Sisus.Init
 			{
 				var guid = guids[n];
 				var path = AssetDatabase.GUIDToAssetPath(guid);
-				var filename = System.IO.Path.GetFileNameWithoutExtension(path);
+				var filename = Path.GetFileNameWithoutExtension(path);
 				if(string.Equals(filename, name, StringComparison.OrdinalIgnoreCase))
 				{
 					var scriptAsset = AssetDatabase.LoadAssetAtPath<MonoScript>(path);
@@ -2627,7 +2879,7 @@ namespace Sisus.Init
 				{
 					var guid = guids[n];
 					var path = AssetDatabase.GUIDToAssetPath(guid);
-					var filename = System.IO.Path.GetFileNameWithoutExtension(path);
+					var filename = Path.GetFileNameWithoutExtension(path);
 					if(filename.Length != name.Length) // skip testing exact matches a second time
 					{
 						var scriptAsset = AssetDatabase.LoadAssetAtPath<MonoScript>(path);
@@ -2725,7 +2977,7 @@ namespace Sisus.Init
 				var guids = AssetDatabase.FindAssets("t:" + type.Name);
 				for(int g = guids.Length - 1; g >= 0; g--)
 				{
-					string assetPath = AssetDatabase.GUIDToAssetPath(guids[i]);
+					var assetPath = AssetDatabase.GUIDToAssetPath(guids[g]);
 					var instance = AssetDatabase.LoadAssetAtPath(assetPath, type);
 					if(instance)
 					{
@@ -2780,7 +3032,7 @@ namespace Sisus.Init
 				var guids = AssetDatabase.FindAssets("t:" + findableType.Name);
 				for(int g = guids.Length - 1; g >= 0; g--)
 				{
-					string assetPath = AssetDatabase.GUIDToAssetPath(guids[i]);
+					var assetPath = AssetDatabase.GUIDToAssetPath(guids[g]);
 					var instance = AssetDatabase.LoadAssetAtPath(assetPath, findableType);
 					if(instance)
 					{
@@ -2825,7 +3077,7 @@ namespace Sisus.Init
 					var guids = AssetDatabase.FindAssets("t:prefab");
 					for(int g = guids.Length - 1; g >= 0; g--)
 					{
-						string assetPath = AssetDatabase.GUIDToAssetPath(guids[g]);
+						var assetPath = AssetDatabase.GUIDToAssetPath(guids[g]);
 						var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
 						if(prefab)
 						{
@@ -2843,7 +3095,7 @@ namespace Sisus.Init
 				var guids = AssetDatabase.FindAssets("t:" + type.Name);
 				for(int g = guids.Length - 1; g >= 0; g--)
 				{
-					string assetPath = AssetDatabase.GUIDToAssetPath(guids[g]);
+					var assetPath = AssetDatabase.GUIDToAssetPath(guids[g]);
 					var instance = AssetDatabase.LoadAssetAtPath(assetPath, type);
 					if(instance)
 					{
@@ -2885,7 +3137,7 @@ namespace Sisus.Init
 					var guids = AssetDatabase.FindAssets("t:prefab");
 					for(int g = guids.Length - 1; g >= 0; g--)
 					{
-						string assetPath = AssetDatabase.GUIDToAssetPath(guids[g]);
+						var assetPath = AssetDatabase.GUIDToAssetPath(guids[g]);
 						var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
 						if(prefab)
 						{
@@ -2903,7 +3155,7 @@ namespace Sisus.Init
 				var guids = AssetDatabase.FindAssets("t:" + findableType.Name);
 				for(int g = guids.Length - 1; g >= 0; g--)
 				{
-					string assetPath = AssetDatabase.GUIDToAssetPath(guids[i]);
+					var assetPath = AssetDatabase.GUIDToAssetPath(guids[g]);
 					var instance = AssetDatabase.LoadAssetAtPath(assetPath, findableType);
 					if(instance)
 					{
@@ -3314,7 +3566,7 @@ namespace Sisus.Init
 				list.Clear();
 			}
 		}
-		
+
 		private static T InChildrenByExactType<T>([DisallowNull] GameObject gameObject, Type findableType, bool includeInactive)
 		{
 			var component = gameObject.GetComponentInChildren(findableType, includeInactive);
@@ -3535,7 +3787,7 @@ namespace Sisus.Init
 			list.Clear();
 			return results;
 		}
-		
+
 		private static void Setup()
 		{
 			var reusableList = new List<Type>(8);
